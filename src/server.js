@@ -16,6 +16,7 @@ import produccionLecheRoutes from "./routes/produccionLeche.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import alertasRoutes from "./routes/alertas.routes.js";
 import iaRoutes from "./routes/ia.routes.js";
+import reportesRoutes from "./routes/reportes.routes.js";
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ app.use( "/api/produccion-leche", produccionLecheRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use( "/api/alertas", alertasRoutes);
 app.use( "/api/ia", iaRoutes);
+app.use("/api/reportes",reportesRoutes);
 
 app.get("/", (req, res) => {
   res.json({
