@@ -27,10 +27,15 @@ function options(req) {
   return {desde,hasta,page,pageSize,vista};
 }
 async function sql(t, params){return (await pool.query(t,params)).rows;}
-const count = async (base,group,params) =>
-  toNumber((await sql(group
+const count = async (base,group,params) => {
+  const query = group
     ? "SELECT COUNT(*)::int AS total FROM (SELECT 1 "+base+group+") cuenta"
-    : "SELECT COUNT(*)::int AS total "+base,params))[0]?.total);
+    : "SELECT COUNT(*)::int AS total "+base;
+  // pg exige tantos valores como parámetros SQL presentes.
+  const ids=[...query.matchAll(/\$(\d+)/g)].map(x=>Number(x[1]));
+  const usados=ids.length?Math.max(...ids):0;
+  return toNumber((await sql(query,params.slice(0,usados)))[0]?.total);
+};
 const columns = (...pairs)=>pairs.map(([key,label])=>({key,label}));
 
 async function operativo(f,desde,hasta,limit,offset,vista){
