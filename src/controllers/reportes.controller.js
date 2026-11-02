@@ -11,9 +11,11 @@ const dateOK = (v) => {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0,10)===v;
 };
 function options(req) {
-  const ahora=new Intl.DateTimeFormat("en-CA",{
-    year:"numeric",month:"2-digit",day:"2-digit",timeZone:ZONA
-  }).format(new Date());
+  const partes=new Intl.DateTimeFormat("en-US", {
+    year:"numeric",month:"2-digit",day:"2-digit",timeZone:ZONA,
+  }).formatToParts(new Date());
+  const fecha = Object.fromEntries(partes.map(({type,value})=>[type,value]));
+  const ahora = fecha.year + "-" + fecha.month + "-" + fecha.day;
   const desde=req.query.desde || ahora.slice(0,4)+"-01-01";
   const hasta=req.query.hasta || ahora;
   const page=req.query.page===undefined ? 1 : Number(req.query.page);
@@ -88,8 +90,15 @@ async function operativo(f,desde,hasta,limit,offset,vista){
       ["capacidad_animales","Capacidad"],["tipo_pasto","Pasto"]);
   }
   const total=await count(base,group,args);
-  const rows=await sql("SELECT "+select+" "+base+group+" ORDER BY "+order+" LIMIT $4 OFFSET $5",
-    [...args,limit,offset]);
+  // PostgreSQL requiere parámetros consecutivos; inventario y potreros
+  // no usan las fechas del listado de animales.
+  const usaFechas = vista === "animales";
+  const sqlPagina = "SELECT " + select + " " + base + group + " ORDER BY " + order +
+    (usaFechas ? " LIMIT $4 OFFSET $5" : " LIMIT $2 OFFSET $3");
+  const argumentosPagina = usaFechas
+    ? [...args,limit,offset]
+    : [f,limit,offset];
+  const rows=await sql(sqlPagina,argumentosPagina);
   return {rows,total,columns:col,kpis:[
     kpi("Animales",animales.total),kpi("Activos",animales.activos),
     kpi("Hembras activas",animales.hembras),kpi("Productos activos",stock.productos),

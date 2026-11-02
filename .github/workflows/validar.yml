@@ -1,0 +1,21 @@
+name: Validar backend
+on:
+  push:
+    branches: [main, "fix/**", "feature/**"]
+  pull_request:
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Validar sintaxis JavaScript
+        run: find src -name '*.js' -type f -print0 | xargs -0 -n1 node --check
+      - name: Verificar registro del módulo de reportes
+        run: |
+          grep -q 'reportesRoutes' src/server.js
+          grep -q 'obtenerReporte' src/controllers/reportes.controller.js
