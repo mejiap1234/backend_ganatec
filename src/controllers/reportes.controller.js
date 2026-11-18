@@ -153,7 +153,7 @@ async function leche(f,desde,hasta,limit,offset){
     AND EXISTS (SELECT 1 FROM registros_leche rl
       JOIN lactancias l ON l.id=rl.lactancia_id JOIN animales a ON a.id=l.animal_id
       WHERE a.finca_id=$1 AND rl.fecha_ordenio::date=pd.fecha_produccion)`,args))[0];
-  return {rows,total,columns:columns(["identificacion","Identificación"],["nombre","Vaca"],
+  return {rows,total,trend:chart.map(x=>({mes:x.label,litros:toNumber(x.value)})),columns:columns(["identificacion","Identificación"],["nombre","Vaca"],
     ["litros","Litros registrados"],["ordenios","Ordeños"],["dias","Días"],["promedio","L/día registrado"]),
     chart,kpis:[kpi("Litros totales",totals.litros),kpi("Días con producción",totals.dias),
       kpi("Promedio por día registrado",totals.promedio),kpi("Vacas con datos individuales",total)],
@@ -249,7 +249,11 @@ async function finanzas(f,desde,hasta,limit,offset){
     `+base+` GROUP BY mf.categoria HAVING SUM(CASE WHEN mf.tipo='gasto' THEN mf.monto ELSE 0 END)>0
     ORDER BY value DESC LIMIT 10`,args);
   const ingresos=toNumber(agg.ingresos), gastos=toNumber(agg.gastos);
-  return {rows,total:toNumber(agg.total),
+  const trend=await sql(`SELECT TO_CHAR(date_trunc('month',mf.fecha_movimiento),'YYYY-MM') mes,
+      COALESCE(SUM(mf.monto) FILTER (WHERE mf.tipo='ingreso'),0)::numeric(14,2) ingresos,
+      COALESCE(SUM(mf.monto) FILTER (WHERE mf.tipo='gasto'),0)::numeric(14,2) gastos
+      `+base+` GROUP BY 1 ORDER BY 1`,args);
+  return {rows,total:toNumber(agg.total),trend:trend.map(x=>({mes:x.mes,ingresos:toNumber(x.ingresos),gastos:toNumber(x.gastos)})),
     columns:columns(["fecha","Fecha"],["tipo","Tipo"],["categoria","Categoría"],["monto","Monto"],
       ["descripcion","Descripción"],["referencia_tipo","Origen"]),
     chart,kpis:[kpi("Ingresos",ingresos,true),kpi("Gastos",gastos,true),
@@ -257,16 +261,34 @@ async function finanzas(f,desde,hasta,limit,offset){
     notes:["El balance corresponde a movimientos registrados, no es utilidad neta contable. Las ventas no se vuelven a sumar porque ya crean movimientos financieros."]};
 }
 
+// El superadministrador puede consultar fincas diferentes; los demás roles no.
+export async function listarFincasReportes(req,res) {
+  try {
+    const fincas = await sql("SELECT id,nombre FROM fincas ORDER BY nombre,id", []);
+    return res.json({ok:true,fincas});
+  } catch (err) {
+    console.error("[Ganatec fincas reportes]", err.message);
+    return res.status(500).json({ok:false,message:"No fue posible consultar las fincas."});
+  }
+}
+
 export async function obtenerReporte(req,res){
   const tipo=req.params.tipo;
   if(!ALLOWED.has(tipo)) return res.status(404).json({ok:false,message:"Reporte inexistente."});
-  if(tipo==="finanzas" && req.usuario.rol!=="administrador")
+  if(tipo==="finanzas" && !["administrador","superadministrador"].includes(req.usuario.rol))
     return res.status(403).json({ok:false,message:"Acceso a finanzas restringido."});
-  const finca=req.usuario.finca_id;
-  if(!finca) return res.status(400).json({ok:false,message:"Falta finca asociada."});
+  const superadmin=req.usuario.rol==="superadministrador";
+  const fincaSolicitada=req.query.fincaId;
+  if(fincaSolicitada !== undefined && !superadmin)
+    return res.status(403).json({ok:false,message:"No puedes seleccionar otra finca."});
+  const finca = superadmin ? Number(fincaSolicitada ?? req.usuario.finca_id) : Number(req.usuario.finca_id);
+  if(!Number.isSafeInteger(finca)||finca<1)
+    return res.status(400).json({ok:false,message:"Selecciona una finca válida."});
   let o;
   try{o=options(req)}catch(e){return res.status(400).json({ok:false,message:e.message})}
   try{
+    const fincaEncontrada=(await sql("SELECT id,nombre FROM fincas WHERE id=$1",[finca]))[0];
+    if(!fincaEncontrada) return res.status(404).json({ok:false,message:"Finca no encontrada."});
     let result;
     const args=[finca,o.desde,o.hasta,o.pageSize,(o.page-1)*o.pageSize];
     if(tipo==="operativo") result=await operativo(...args,o.vista);
@@ -275,7 +297,9 @@ export async function obtenerReporte(req,res){
     else if(tipo==="salud") result=await salud(...args);
     else result=await finanzas(...args);
     return res.json({ok:true,tipo,vista:tipo==="operativo"?o.vista:null,
+      finca:fincaEncontrada,esEstadoActual:tipo==="operativo",
       periodo:{desde:o.desde,hasta:o.hasta},resumen:result.kpis,
+      tendencia:result.trend||[],
       grafica:result.chart.map(p=>({nombre:p.label||p.nombre,valor:toNumber(p.value??p.valor)})),
       columnas:result.columns,filas:result.rows,avisos:result.notes,
       paginacion:{page:o.page,pageSize:o.pageSize,totalItems:result.total,
